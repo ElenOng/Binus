@@ -28,7 +28,7 @@
                     <form method="post" asp-action="Registration" id="regForm">
                         @Html.AntiForgeryToken()
                         <div class="mb-4">
-                            <h5>Children <small class="text-muted">(select up to 3, age 2 - 21)</small></h5>
+                            <h5>Children <small class="text-muted">(select up to 3, age must follow selected shift rule)</small></h5>
                             <div class="row">
                                 @for (int i = 0; i < Model.Children.Count; i++)
                                 {
@@ -88,8 +88,12 @@
             const form = document.getElementById('regForm');
             form.parentNode.insertBefore(conflictContainer, form.nextSibling);
 
+        function getCheckedCount(){
+            return Array.from(checkboxes).filter(c=>c.checked).length;
+        }
+
         function updateCheckboxState(){
-            const checked = Array.from(checkboxes).filter(c=>c.checked).length;
+            const checked = getCheckedCount();
             if(checked >= maxSelect){
                 checkboxes.forEach(c=>{ if(!c.checked) c.disabled = true; });
             } else {
@@ -97,18 +101,24 @@
             }
         }
 
-        checkboxes.forEach(c=> c.addEventListener('change', updateCheckboxState));
-        updateCheckboxState();
-
         // disable save if selected shift has no quota
         const radios = document.querySelectorAll('.shift-radio');
         async function updateSaveByShift(){
+            updateCheckboxState();
+
             const selected = Array.from(radios).find(r=> r.checked);
             // basic check: require shift and at least one child
-            const anyChild = Array.from(checkboxes).some(c=> c.checked);
+            const checkedCount = getCheckedCount();
+            const anyChild = checkedCount > 0;
             if(!selected || !anyChild){
                 saveBtn.disabled = true;
                 conflictContainer.innerHTML = '<div class="text-danger">Please select at least one child and a shift.</div>';
+                return;
+            }
+
+            if(checkedCount > maxSelect){
+                saveBtn.disabled = true;
+                conflictContainer.innerHTML = '<div class="text-danger">Maximum 3 children can be selected.</div>';
                 return;
             }
 

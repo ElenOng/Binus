@@ -28,7 +28,7 @@ namespace Binus.Controllers
             _registrationRepository = registrationRepository;
         }
 
-        // Registration period - for demo we set a period around today
+        private const int _maxSelectedChildren = 3;
         private readonly DateTime _regStart = DateTime.Today.AddDays(-1);
         private readonly DateTime _regEnd = DateTime.Today.AddDays(7);
 
@@ -42,13 +42,9 @@ namespace Binus.Controllers
             {
                 var children = await _registrationRepository.GetChildrenAsync(binusianId);
                 model.Children = children.Select(c => new ChildOption { AnakKe = c.AnakKe, Name = c.Nama, Age = c.TanggalLahir.HasValue ? (DateTime.Today.Year - c.TanggalLahir.Value.Year) - (c.TanggalLahir.Value.Date > DateTime.Today.AddYears(-(DateTime.Today.Year - c.TanggalLahir.Value.Year)) ? 1 : 0) : 0 }).ToList();
-                // Age is not stored in master_data_anak_pegawai in diagram; set 0 or derive if available
 
                 var shifts = await _registrationRepository.GetShiftsAsync();
                 model.Shifts = shifts.Select(s => new ShiftOption { ShiftId = s.ShiftId, Info = s.ShiftInfo, Quota = s.Quota }).ToList();
-
-                // Prefill of saved registration is omitted here to keep the repository surface minimal.
-                // If you want prefill, add a repository method to read transaction_registration for the binusian.
             }
 
             model.IsRegistrationOpen = DateTime.Now >= _regStart && DateTime.Now <= _regEnd;
@@ -68,7 +64,6 @@ namespace Binus.Controllers
         [HttpPost]
         public async Task<IActionResult> Registration(RegistrationViewModel model)
         {
-            // require at least one child and a shift
             if (model.SelectedChildren == null || !model.SelectedChildren.Any())
             {
                 ModelState.AddModelError(string.Empty, "Please select at least one child.");
@@ -79,14 +74,12 @@ namespace Binus.Controllers
                 ModelState.AddModelError(string.Empty, "Please select a shift.");
             }
 
-            // server-side validation: max 3 children
             if (model.SelectedChildren == null) model.SelectedChildren = new List<int>();
-            if (model.SelectedChildren.Count > 3)
+            if (model.SelectedChildren.Count > _maxSelectedChildren)
             {
-                ModelState.AddModelError(string.Empty, "Maximum 3 children can be selected.");
+                ModelState.AddModelError(string.Empty, $"Maximum {_maxSelectedChildren} children can be selected.");
             }
 
-            // validate ages using DB data
             var binusianIdForCheck = User.FindFirst("BinusianId")?.Value;
             var childrenFromDb = new List<(int AnakKe, string Nama, System.DateTime? TanggalLahir)>();
             if (!string.IsNullOrEmpty(binusianIdForCheck))
@@ -94,23 +87,48 @@ namespace Binus.Controllers
                 childrenFromDb = await _registrationRepository.GetChildrenAsync(binusianIdForCheck);
             }
 
-            bool validAges = true;
-            foreach (var child in childrenFromDb.Where(c => model.SelectedChildren.Contains(c.AnakKe)))
+            var selectedChildrenFromDb = childrenFromDb
+                .Where(c => model.SelectedChildren.Contains(c.AnakKe))
+                .ToList();
+
+            if (selectedChildrenFromDb.Count != model.SelectedChildren.Count)
             {
-                if (child.TanggalLahir == null)
-                {
-                    validAges = false; break;
-                }
-                var age = DateTime.Today.Year - child.TanggalLahir.Value.Year;
-                if (child.TanggalLahir.Value.Date > DateTime.Today.AddYears(-age)) age--;
-                if (age < 2 || age > 21) { validAges = false; break; }
-            }
-            if (!validAges)
-            {
-                ModelState.AddModelError(string.Empty, "Selected child(ren) must be between 2 and 21 years old.");
+                ModelState.AddModelError(string.Empty, "One or more selected children are invalid.");
             }
 
-            // check registration period
+            var ageRule = model.SelectedShiftId.HasValue && model.SelectedShiftId.Value > 0
+                ? await _registrationRepository.GetBatchAgeRuleByShiftAsync(model.SelectedShiftId.Value)
+                : null;
+
+            if (ageRule == null || !ageRule.Value.MinimumAge.HasValue || !ageRule.Value.MaximumAge.HasValue)
+            {
+                ModelState.AddModelError(string.Empty, "Age requirement for the selected batch is not configured.");
+            }
+            else
+            {
+                var minimumAge = ageRule.Value.MinimumAge.Value;
+                var maximumAge = ageRule.Value.MaximumAge.Value;
+                var ageReferenceDate = DateTime.Today;
+
+                var hasInvalidAge = selectedChildrenFromDb.Any(child =>
+                {
+                    if (child.TanggalLahir == null)
+                    {
+                        return true;
+                    }
+
+                    var age = ageReferenceDate.Year - child.TanggalLahir.Value.Year;
+                    if (child.TanggalLahir.Value.Date > ageReferenceDate.AddYears(-age)) age--;
+
+                    return age < minimumAge || age > maximumAge;
+                });
+
+                if (hasInvalidAge)
+                {
+                    ModelState.AddModelError(string.Empty, $"Selected child(ren) must be between {minimumAge} and {maximumAge} years old.");
+                }
+            }
+
             var isOpen = DateTime.Now >= _regStart && DateTime.Now <= _regEnd;
             if (!isOpen)
             {
@@ -119,7 +137,6 @@ namespace Binus.Controllers
 
             if (!ModelState.IsValid)
             {
-                // reload lists from DB
                 var binusianId = User.FindFirst("BinusianId")?.Value;
                 if (!string.IsNullOrEmpty(binusianId))
                 {
@@ -142,8 +159,9 @@ namespace Binus.Controllers
                     ModelState.AddModelError(string.Empty, "One or more selected child(ren) are already registered for the selected shift.");
                 else if (result == 3)
                     ModelState.AddModelError(string.Empty, "Data already exists (no changes were made).");
+                else if (result == 4)
+                    ModelState.AddModelError(string.Empty, "Selected child(ren) do not meet age requirement for the selected shift.");
 
-                // reload lists
                 var children = await _registrationRepository.GetChildrenAsync(binusianIdFinal);
                 model.Children = children.Select(c => new ChildOption { AnakKe = c.AnakKe, Name = c.Nama, Age = c.TanggalLahir.HasValue ? (DateTime.Today.Year - c.TanggalLahir.Value.Year) - (c.TanggalLahir.Value.Date > DateTime.Today.AddYears(-(DateTime.Today.Year - c.TanggalLahir.Value.Year)) ? 1 : 0) : 0 }).ToList();
                 var shifts = await _registrationRepository.GetShiftsAsync();
@@ -152,7 +170,6 @@ namespace Binus.Controllers
                 return View(model);
             }
 
-            // reload state after successful save
             var savedChildren = await _registrationRepository.GetChildrenAsync(binusianIdFinal);
             model.Children = savedChildren.Select(c => new ChildOption { AnakKe = c.AnakKe, Name = c.Nama, Age = c.TanggalLahir.HasValue ? (DateTime.Today.Year - c.TanggalLahir.Value.Year) - (c.TanggalLahir.Value.Date > DateTime.Today.AddYears(-(DateTime.Today.Year - c.TanggalLahir.Value.Year)) ? 1 : 0) : 0 }).ToList();
             var newShifts = await _registrationRepository.GetShiftsAsync();
@@ -162,8 +179,6 @@ namespace Binus.Controllers
             ViewBag.Message = "Data already saved";
             return View(model);
         }
-
-        // Demo Build is removed; data now comes from the IRegistrationRepository
 
         [ResponseCache(Duration = 0, Location = ResponseCacheLocation.None, NoStore = true)]
         public IActionResult Error()
