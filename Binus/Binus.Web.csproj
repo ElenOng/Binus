@@ -7,8 +7,6 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\Binus.Domain\Binus.Domain.csproj" />
-    <ProjectReference Include="..\Binus.Facade\Binus.Facade.csproj" />
     <ProjectReference Include="..\Binus.DataAccess\Binus.DataAccess.csproj" />
   </ItemGroup>
 

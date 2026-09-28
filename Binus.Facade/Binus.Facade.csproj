@@ -8,7 +8,6 @@
 
   <ItemGroup>
     <ProjectReference Include="..\Binus.DataAccess\Binus.DataAccess.csproj" />
-    <ProjectReference Include="..\Binus.Domain\Binus.Domain.csproj" />
   </ItemGroup>
 
 </Project>
