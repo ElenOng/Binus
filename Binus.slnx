@@ -1,0 +1,6 @@
+<Solution>
+  <Project Path="Binus.DataAccess/Binus.DataAccess.csproj" />
+  <Project Path="Binus.Domain/Binus.Domain.csproj" />
+  <Project Path="Binus.Facade/Binus.Facade.csproj" />
+  <Project Path="Binus/Binus.Web.csproj" />
+</Solution>
