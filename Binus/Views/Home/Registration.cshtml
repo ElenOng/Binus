@@ -1,0 +1,152 @@
+@model Binus.Models.RegistrationViewModel
+@{
+    Layout = "~/Views/Shared/_Layout.cshtml";
+    ViewData["Title"] = "Registration";
+}
+
+<div class="container mt-4">
+    <div class="row">
+        <div class="col-md-10 offset-md-1">
+            <div class="card shadow-sm">
+                <div class="card-header bg-primary text-white d-flex justify-content-between align-items-center">
+                    <div>
+                        <h4 class="mb-0">Flu Vaccine Registration for Employee's Children</h4>
+                    </div>
+                    <!--<logout removed - logout available via profile or other flow>-->
+                </div>
+                <div class="card-body">
+                    <p>I would like to register my child/children below for Flu Vaccine on <strong>@(DateTime.Today.ToString("dddd, MMMM d, yyyy"))</strong></p>
+
+                    @* show validation summary *@
+                    @Html.ValidationSummary(true, "", new { @class = "alert alert-danger" })
+
+                    @if (!Model.IsRegistrationOpen)
+                    {
+                        <div class="alert alert-warning">Registration period is closed. Save is disabled.</div>
+                    }
+
+                    <form method="post" asp-action="Registration" id="regForm">
+                        @Html.AntiForgeryToken()
+                        <div class="mb-4">
+                            <h5>Children <small class="text-muted">(select up to 3, age 2 - 21)</small></h5>
+                            <div class="row">
+                                @for (int i = 0; i < Model.Children.Count; i++)
+                                {
+                                    var child = Model.Children[i];
+                                    var isChecked = Model.SelectedChildren?.Contains(child.AnakKe) ?? false;
+                                    <div class="col-md-6">
+                                        <div class="form-check">
+                                            <input class="form-check-input child-checkbox" type="checkbox" name="SelectedChildren" value="@child.AnakKe" id="child_@child.AnakKe" @(isChecked ? "checked=\"checked\"" : "") />
+                                            <label class="form-check-label" for="child_@child.AnakKe">@child.Name <span class="text-muted">(@child.Age Y/O)</span></label>
+                                        </div>
+                                    </div>
+                                }
+                            </div>
+                        </div>
+
+                        <div class="mb-4">
+                            <h5>I choose Shift</h5>
+                            <div class="list-group">
+                                @foreach (var shift in Model.Shifts)
+                                {
+                                    var disabled = shift.Quota <= 0 ? "disabled=\"disabled\"" : "";
+                                    <label class="list-group-item d-flex justify-content-between align-items-center">
+                                        <div>
+                                            <input class="form-check-input me-2 shift-radio" type="radio" name="SelectedShiftId" value="@shift.ShiftId" @(Model.SelectedShiftId == shift.ShiftId ? "checked=\"checked\"" : "") @Html.Raw(disabled) />
+                                            <span>@shift.Info</span>
+                                        </div>
+                                        <span class="badge bg-secondary">@shift.Quota slot(s) available</span>
+                                    </label>
+                                }
+                            </div>
+                        </div>
+
+                        <div class="d-flex align-items-center">
+                            <button type="submit" id="saveBtn" class="btn btn-success me-3" @(Model.IsRegistrationOpen ? "" : "disabled")>Save</button>
+                        @if (Model.SavedAt != null)
+                        {
+                            <small class="text-muted">Data already saved on @(Model.SavedAt?.ToString("g"))</small>
+                        }
+                        </div>
+                    </form>
+                </div>
+                <div class="card-footer text-muted">
+                    Employee may change registration while registration period is open.
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+    (function(){
+        const maxSelect = 3;
+        const checkboxes = document.querySelectorAll('.child-checkbox');
+        const saveBtn = document.getElementById('saveBtn');
+            const conflictContainer = document.createElement('div');
+            conflictContainer.className = 'mt-2';
+            const form = document.getElementById('regForm');
+            form.parentNode.insertBefore(conflictContainer, form.nextSibling);
+
+        function updateCheckboxState(){
+            const checked = Array.from(checkboxes).filter(c=>c.checked).length;
+            if(checked >= maxSelect){
+                checkboxes.forEach(c=>{ if(!c.checked) c.disabled = true; });
+            } else {
+                checkboxes.forEach(c=> c.disabled = false);
+            }
+        }
+
+        checkboxes.forEach(c=> c.addEventListener('change', updateCheckboxState));
+        updateCheckboxState();
+
+        // disable save if selected shift has no quota
+        const radios = document.querySelectorAll('.shift-radio');
+        async function updateSaveByShift(){
+            const selected = Array.from(radios).find(r=> r.checked);
+            // basic check: require shift and at least one child
+            const anyChild = Array.from(checkboxes).some(c=> c.checked);
+            if(!selected || !anyChild){
+                saveBtn.disabled = true;
+                conflictContainer.innerHTML = '<div class="text-danger">Please select at least one child and a shift.</div>';
+                return;
+            }
+
+            if(selected.disabled){
+                saveBtn.disabled = true;
+                conflictContainer.innerHTML = '<div class="text-danger">Selected shift has no available slots.</div>';
+                return;
+            }
+
+            // call server to check conflicts
+            const selectedAnak = Array.from(checkboxes).filter(c=>c.checked).map(c=>parseInt(c.value));
+            const fd = new FormData();
+            fd.append('__RequestVerificationToken', document.querySelector('input[name=__RequestVerificationToken]').value);
+            fd.append('shiftId', selected.value);
+            selectedAnak.forEach(a=> fd.append('anakKes', a));
+
+            try{
+                const resp = await fetch('@Url.Action("CheckConflicts","Home")', { method: 'POST', body: fd });
+                const data = await resp.json();
+                if(data && data.conflicts && data.conflicts.length > 0){
+                    // map conflicts to names
+                    const names = data.conflicts.map(k => {
+                        const el = Array.from(checkboxes).find(c => parseInt(c.value) === k);
+                        return el ? el.nextElementSibling.innerText : ("anak_ke="+k);
+                    });
+                    conflictContainer.innerHTML = '<div class="alert alert-danger">The following child(ren) are already registered for the selected shift: <strong>' + names.join(', ') + '</strong></div>';
+                    saveBtn.disabled = true;
+                } else {
+                    conflictContainer.innerHTML = '';
+                    saveBtn.disabled = false;
+                }
+            } catch(e){
+                console.error(e);
+            }
+        }
+        radios.forEach(r=> r.addEventListener('change', updateSaveByShift));
+        checkboxes.forEach(c=> c.addEventListener('change', updateSaveByShift));
+        updateSaveByShift();
+
+    })();
+</script>

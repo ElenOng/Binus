@@ -1,7 +1,24 @@
+using Binus.DataAccess;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.AspNetCore.Authentication.Cookies;
+
 var builder = WebApplication.CreateBuilder(args);
 
 // Add services to the container.
 builder.Services.AddControllersWithViews();
+builder.Services.AddDbContext<AppDbContext>(options =>
+    options.UseSqlServer(builder.Configuration.GetConnectionString("DefaultConnection")));
+// Cookie authentication for simple login flow
+builder.Services.AddAuthentication(CookieAuthenticationDefaults.AuthenticationScheme)
+    .AddCookie(options =>
+    {
+        options.LoginPath = "/Account/Login";
+        options.AccessDeniedPath = "/Account/Login";
+    });
+// Register ADO.NET repositories
+builder.Services.AddScoped<Binus.DataAccess.IUserRepository, Binus.DataAccess.UserRepository>();
+// Register registration repository (ADO.NET).
+builder.Services.AddScoped<Binus.DataAccess.IRegistrationRepository, Binus.DataAccess.RegistrationRepository>();
 
 var app = builder.Build();
 
@@ -16,13 +33,14 @@ if (!app.Environment.IsDevelopment())
 app.UseHttpsRedirection();
 app.UseRouting();
 
+app.UseAuthentication();
 app.UseAuthorization();
 
 app.MapStaticAssets();
 
 app.MapControllerRoute(
     name: "default",
-    pattern: "{controller=Home}/{action=Index}/{id?}")
+    pattern: "{controller=Home}/{action=Registration}/{id?}")
     .WithStaticAssets();
 
 
